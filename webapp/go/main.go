@@ -161,7 +161,7 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stmt, err := tx.PreparexContext(ctx, "INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at)")
+	stmt, err := tx.PreparexContext(ctx, "INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at), total_distance = total_distance + ABS(latitude - VALUES(latitude)) + ABS(longitude - VALUES(longitude))")
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
