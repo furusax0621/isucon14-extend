@@ -574,7 +574,7 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 	// 椅子が空いてるという状態に更新
 	_, err = tx.ExecContext(
 		ctx,
-		"UPDATE chairs SET is_available = TRUE WHERE id = ?",
+		"UPDATE chairs SET is_free = TRUE WHERE id = ?",
 		ride.ChairID.String,
 	)
 	if err != nil {

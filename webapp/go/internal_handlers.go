@@ -55,7 +55,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	if _, err := tx.ExecContext(ctx, "UPDATE chairs SET is_active = FALSE WHERE id = ?", matched.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE chairs SET is_free = FALSE WHERE id = ?", matched.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
