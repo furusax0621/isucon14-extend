@@ -30,9 +30,9 @@ CREATE TABLE chairs
   model        TEXT         NOT NULL COMMENT '椅子のモデル',
   is_active    TINYINT(1)   NOT NULL COMMENT '配椅子受付中かどうか',
   access_token VARCHAR(255) NOT NULL COMMENT 'アクセストークン',
-  is_ridable   TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '利用可能かどうか',
   created_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
   updated_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新日時',
+  is_ridable   TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '利用可能かどうか',
   PRIMARY KEY (id)
 )
   COMMENT = '椅子情報テーブル';
