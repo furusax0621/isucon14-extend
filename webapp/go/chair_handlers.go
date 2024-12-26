@@ -114,14 +114,6 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	chairLocation := &ChairLocation{}
-	if err := tx.GetContext(ctx, chairLocation, "SELECT chair_id, latitude, longitude FROM chair_last_locations WHERE chair_id = ? FOR UPDATE", chair.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	// 距離計算
-	distance := calculateDistance(chairLocation.Latitude, chairLocation.Longitude, req.Latitude, req.Longitude)
-
 	chairLocationID := ulid.Make().String()
 	if _, err := tx.ExecContext(
 		ctx,
@@ -133,9 +125,9 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at), total_distance = total_distance + VALUES(total_distance)",
-		chair.ID, req.Latitude, req.Longitude, now, distance,
+		"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) "+
+			"ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at), total_distance = total_distance + ABS(latitude - VALUES(latitude)) + ABS(longitude - VALUES(longitude))",
+		chair.ID, req.Latitude, req.Longitude, now,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
