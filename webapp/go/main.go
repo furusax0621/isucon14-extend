@@ -80,7 +80,7 @@ func setup() http.Handler {
 		authedMux.HandleFunc("GET /api/app/rides", appGetRides)
 		authedMux.HandleFunc("POST /api/app/rides", appPostRides)
 		authedMux.HandleFunc("POST /api/app/rides/estimated-fare", appPostRidesEstimatedFare)
-		authedMux.HandleFunc("POST /api/app/rides/{ride_id}/evaluation", appPostRideEvaluatation)
+		authedMux.HandleFunc("POST /api/app/rides/{ride_id}/evaluation", appPostRideEvaluation)
 		authedMux.HandleFunc("GET /api/app/notification", appGetNotification)
 		authedMux.HandleFunc("GET /api/app/nearby-chairs", appGetNearbyChairs)
 	}
@@ -138,6 +138,43 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := db.ExecContext(ctx, "UPDATE settings SET value = ? WHERE name = 'payment_gateway_url'", req.PaymentServer); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// すべての椅子の最新位置を取得
+	tx, err := db.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+
+	var locations []*ChairLocation
+	err = tx.SelectContext(
+		ctx,
+		&locations,
+		"SELECT * FROM chair_locations ORDER BY created_at ASC",
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	stmt, err := tx.PreparexContext(ctx, "INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at)")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer stmt.Close()
+
+	for _, location := range locations {
+		if _, err := stmt.ExecContext(ctx, location.ChairID, location.Latitude, location.Longitude, location.CreatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
