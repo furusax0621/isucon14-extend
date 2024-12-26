@@ -505,7 +505,7 @@ type appPostRideEvaluationResponse struct {
 	CompletedAt int64 `json:"completed_at"`
 }
 
-func appPostRideEvaluatation(w http.ResponseWriter, r *http.Request) {
+func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	rideID := r.PathValue("ride_id")
 
