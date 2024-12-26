@@ -142,6 +142,43 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// すべての椅子の最新位置を取得
+	tx, err := db.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+
+	var locations []*ChairLocation
+	err = tx.SelectContext(
+		ctx,
+		&locations,
+		"SELECT * FROM chair_locations ORDER BY created_at ASC",
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	stmt, err := tx.PreparexContext(ctx, "INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at)")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer stmt.Close()
+
+	for _, location := range locations {
+		if _, err := stmt.ExecContext(ctx, location.ChairID, location.Latitude, location.Longitude, location.CreatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	if _, err := http.Get("http://localhost:18080/api/group/collect"); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
