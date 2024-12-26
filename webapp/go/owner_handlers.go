@@ -207,7 +207,7 @@ func ownerGetChairs(w http.ResponseWriter, r *http.Request) {
        IFNULL(cl.total_distance, 0) AS total_distance,
        cl.updated_at AS total_distance_updated_at
 FROM chairs AS c
-       JOIN chair_last_locations AS cl ON c.id = cl.chair_id
+       LEFT JOIN chair_last_locations AS cl ON c.id = cl.chair_id
 WHERE c.owner_id = ?
 `, owner.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
