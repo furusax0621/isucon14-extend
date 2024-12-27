@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -65,7 +66,9 @@ func setup() http.Handler {
 		panic(err)
 	}
 	db = _db
-	db.SetMaxOpenConns(100)
+	db.SetMaxOpenConns(200)
+	db.SetMaxIdleConns(200)
+	db.SetConnMaxLifetime(80 * time.Second)
 
 	mux := chi.NewRouter()
 	mux.Use(middleware.Logger)
