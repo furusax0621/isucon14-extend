@@ -245,6 +245,19 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+
+		// ライドが完了していたら椅子の状態を空きにする
+		if status == "COMPLETED" {
+			_, err = tx.ExecContext(
+				ctx,
+				"UPDATE chairs SET is_free = TRUE WHERE id = ?",
+				ride.ChairID.String,
+			)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
