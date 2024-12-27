@@ -354,6 +354,14 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if _, err := tx.ExecContext(
+		ctx,
+		"INSERT INTO ride_latest_statuses (ride_id, status) VALUES (?, ?)",
+		rideID, "MATCHING",
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	var rideCount int
 	if err := tx.GetContext(ctx, &rideCount, `SELECT COUNT(*) FROM rides WHERE user_id = ? `, user.ID); err != nil {
@@ -567,6 +575,14 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)`,
 		ulid.Make().String(), rideID, "COMPLETED")
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		"UPDATE ride_latest_statuses SET status = ? WHERE ride_id = ?",
+		"COMPLETED", rideID,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
