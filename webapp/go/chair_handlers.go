@@ -109,7 +109,6 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 
 	go func(ctx context.Context) {
 		chair := ctx.Value("chair").(*Chair)
-		ctx = context.WithoutCancel(ctx)
 		tx, err := db.Beginx()
 		if err != nil {
 			slog.Error("failed to begin transaction", slog.Any("err", err))
@@ -171,7 +170,7 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to commit transaction", slog.Any("err", err))
 			return
 		}
-	}(ctx)
+	}(context.WithoutCancel(ctx))
 
 	writeJSON(w, http.StatusOK, &chairPostCoordinateResponse{
 		RecordedAt: now.UnixMilli(),
