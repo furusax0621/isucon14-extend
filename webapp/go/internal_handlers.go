@@ -69,7 +69,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 割り当てた椅子を割り当て待ちから削除
-		chairs = slices.Delete(chairs, matchedIndex, 1)
+		chairs = slices.Delete(chairs, matchedIndex, matchedIndex+1)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
