@@ -29,6 +29,8 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	matchedList := make(map[string]string)
+
 	// ライドと椅子をマッチング
 	for _, ride := range rides {
 		distance := 400
@@ -47,34 +49,32 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		if matched.ID == "" {
 			continue
 		}
-
-		// マッチングした椅子をライドに割り当て
-		err := func() error {
-			tx, err := db.Beginx()
-			if err != nil {
-				return err
-			}
-			defer tx.Rollback()
-
-			if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", matched.ID, ride.ID); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, "UPDATE chairs SET is_free = FALSE WHERE id = ?", matched.ID); err != nil {
-				return err
-			}
-			if err := tx.Commit(); err != nil {
-				return err
-			}
-
-			return nil
-		}()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		matchedList[ride.ID] = matched.ID
 
 		// 割り当てた椅子を割り当て待ちから削除
 		chairs = slices.Delete(chairs, matchedIndex, matchedIndex+1)
+	}
+
+	tx, err := db.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+
+	for rideID, chairID := range matchedList {
+		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chairID, rideID); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE chairs SET is_free = FALSE WHERE id = ?", chairID); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
