@@ -43,6 +43,11 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		// マッチングした椅子がなければ次のライドへ
+		if matched.ID == "" {
+			continue
+		}
+
 		// マッチングした椅子をライドに割り当て
 		err := func() error {
 			tx, err := db.Beginx()
