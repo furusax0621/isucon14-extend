@@ -571,17 +571,6 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 椅子が空いてるという状態に更新
-	_, err = tx.ExecContext(
-		ctx,
-		"UPDATE chairs SET is_free = TRUE WHERE id = ?",
-		ride.ChairID.String,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE id = ?`, rideID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, errors.New("ride not found"))

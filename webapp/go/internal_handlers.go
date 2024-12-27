@@ -1,47 +1,58 @@
 package main
 
 import (
-	"database/sql"
-	"errors"
 	"net/http"
+	"slices"
 )
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	// MEMO: 一旦最も待たせているリクエストに適当な空いている椅子マッチさせる実装とする。おそらくもっといい方法があるはず…
-	ride := &Ride{}
-	if err := db.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1`); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
+
+	// まだ椅子が割り当てられていないライドを取得。ループの都合上、より時間が経過しているものから取得
+	rides := []Ride{}
+	if err := db.SelectContext(ctx, &rides, `SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at ASC`); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	matched := &Chair{}
-	empty := false
-	for i := 0; i < 10; i++ {
-		if err := db.GetContext(ctx, matched, "SELECT * FROM chairs INNER JOIN (SELECT id FROM chairs WHERE is_active = TRUE ORDER BY RAND() LIMIT 1) AS tmp ON chairs.id = tmp.id LIMIT 1"); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err)
-		}
-
-		if err := db.GetContext(ctx, &empty, "SELECT COUNT(*) = 0 FROM (SELECT COUNT(chair_sent_at) = 6 AS completed FROM ride_statuses WHERE ride_id IN (SELECT id FROM rides WHERE chair_id = ?) GROUP BY ride_id) is_completed WHERE completed = FALSE", matched.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if empty {
-			break
-		}
-	}
-	if !empty {
+	// 割当待ちのライドがなければ一件落着
+	if len(rides) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
+	}
+
+	// 現在空いている椅子を取得
+	chairs := []ChairWithLocation{}
+	if err := db.SelectContext(ctx, &chairs, `SELECT chairs.*, cl.latitude, cl.longitude FROM chairs JOIN chair_last_locations AS cl ON cl.chair_id = chairs.id WHERE is_free = TRUE AND is_active = TRUE`); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	matchedList := make(map[string]string)
+
+	// ライドと椅子をマッチング
+	for _, ride := range rides {
+		distance := 400
+		var matched ChairWithLocation
+		var matchedIndex int
+		for i, chair := range chairs {
+			d := calculateDistance(ride.PickupLatitude, ride.PickupLongitude, chair.Latitude, chair.Longitude)
+			if d < distance {
+				distance = d
+				matched = chair
+				matchedIndex = i
+			}
+		}
+
+		// マッチングした椅子がなければ次のライドへ
+		if matched.ID == "" {
+			continue
+		}
+		matchedList[ride.ID] = matched.ID
+
+		// 割り当てた椅子を割り当て待ちから削除
+		chairs = slices.Delete(chairs, matchedIndex, matchedIndex+1)
 	}
 
 	tx, err := db.Beginx()
@@ -51,13 +62,15 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", matched.ID, ride.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if _, err := tx.ExecContext(ctx, "UPDATE chairs SET is_free = FALSE WHERE id = ?", matched.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
+	for rideID, chairID := range matchedList {
+		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chairID, rideID); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE chairs SET is_free = FALSE WHERE id = ?", chairID); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
