@@ -146,7 +146,6 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// すべての椅子の最新位置を取得
 	tx, err := db.Beginx()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -154,36 +153,68 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	var locations []*ChairLocation
-	err = tx.SelectContext(
-		ctx,
-		&locations,
-		"SELECT * FROM chair_locations ORDER BY created_at ASC",
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	stmt, err := tx.PreparexContext(
-		ctx,
-		"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) AS new "+
-			"ON DUPLICATE KEY UPDATE "+
-			"total_distance = chair_last_locations.total_distance + ABS(chair_last_locations.latitude - new.latitude) + ABS(chair_last_locations.longitude - new.longitude), "+
-			"latitude = new.latitude, longitude = new.longitude, updated_at = new.updated_at ",
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	defer stmt.Close()
-
-	for _, location := range locations {
-		if _, err := stmt.ExecContext(ctx, location.ChairID, location.Latitude, location.Longitude, location.CreatedAt); err != nil {
+	// すべての椅子の最新位置を取得
+	{
+		var locations []*ChairLocation
+		err = tx.SelectContext(
+			ctx,
+			&locations,
+			"SELECT * FROM chair_locations ORDER BY created_at ASC",
+		)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+
+		stmt, err := tx.PreparexContext(
+			ctx,
+			"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) AS new "+
+				"ON DUPLICATE KEY UPDATE "+
+				"total_distance = chair_last_locations.total_distance + ABS(chair_last_locations.latitude - new.latitude) + ABS(chair_last_locations.longitude - new.longitude), "+
+				"latitude = new.latitude, longitude = new.longitude, updated_at = new.updated_at ",
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer stmt.Close()
+
+		for _, location := range locations {
+			if _, err := stmt.ExecContext(ctx, location.ChairID, location.Latitude, location.Longitude, location.CreatedAt); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
 	}
+
+	// すべてのライドの最新状態を取得
+	{
+		var rides []Ride
+		err := tx.SelectContext(ctx, &rides, "SELECT * FROM rides")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		// 初期データをハックした感じ、とりあえず全部 COMPLETED にしておけば良さそう。。
+		stmt, err := tx.PreparexContext(
+			ctx,
+			"INSERT INTO ride_latest_statuses (ride_id, status) VALUES (?, 'COMPLETED')",
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		defer stmt.Close()
+
+		for _, ride := range rides {
+			if _, err := stmt.ExecContext(ctx, ride.ID); err != nil {
+				writeError(w, http.StatusInternalServerError, err)
+				return
+			}
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
