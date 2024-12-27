@@ -105,6 +105,8 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 
 	chair := ctx.Value("chair").(*Chair)
 
+	now := time.Now()
+
 	tx, err := db.Beginx()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -115,24 +117,20 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	chairLocationID := ulid.Make().String()
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude) VALUES (?, ?, ?, ?)`,
-		chairLocationID, chair.ID, req.Latitude, req.Longitude,
+		`INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)`,
+		chairLocationID, chair.ID, req.Latitude, req.Longitude, now,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if _, err := tx.ExecContext(
 		ctx,
-		"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at) VALUES (?, ?, ?, ?) "+
-			"ON DUPLICATE KEY UPDATE latitude = VALUES(latitude), longitude = VALUES(longitude), updated_at = VALUES(updated_at)",
-		chair.ID, req.Latitude, req.Longitude, time.Now(),
+		"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) AS new "+
+			"ON DUPLICATE KEY UPDATE "+
+			"total_distance = chair_last_locations.total_distance + ABS(chair_last_locations.latitude - new.latitude) + ABS(chair_last_locations.longitude - new.longitude), "+
+			"latitude = new.latitude, longitude = new.longitude, updated_at = new.updated_at ",
+		chair.ID, req.Latitude, req.Longitude, now,
 	); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	location := &ChairLocation{}
-	if err := tx.GetContext(ctx, location, `SELECT * FROM chair_locations WHERE id = ?`, chairLocationID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -172,7 +170,7 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, &chairPostCoordinateResponse{
-		RecordedAt: location.CreatedAt.UnixMilli(),
+		RecordedAt: now.UnixMilli(),
 	})
 }
 
