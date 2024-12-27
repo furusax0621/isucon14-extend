@@ -1,0 +1,13 @@
+.*
+go/
+local/
+recipe/
+webapp/nodejs/
+webapp/openapi.yaml
+webapp/payment_mock/
+webapp/perl/
+webapp/php/
+webapp/public/
+webapp/python/
+webapp/ruby/
+webapp/rust/
