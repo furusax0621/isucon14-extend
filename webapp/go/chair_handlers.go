@@ -135,18 +135,14 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ride := &Ride{}
-	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
+	ride := &RideWithStatus{}
+	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 	} else {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		status := ride.Status
 		if status != "COMPLETED" && status != "CANCELED" {
 			if req.Latitude == ride.PickupLatitude && req.Longitude == ride.PickupLongitude && status == "ENROUTE" {
 				if _, err := tx.ExecContext(ctx, "INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)", ulid.Make().String(), ride.ID, "PICKUP"); err != nil {
@@ -218,11 +214,10 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	ride := &Ride{}
+	ride := &RideWithStatus{}
 	yetSentRideStatus := RideStatus{}
-	status := ""
 
-	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
+	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusOK, &chairGetNotificationResponse{
 				RetryAfterMs: 30,
@@ -233,14 +228,9 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	status := ride.Status
 	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			status, err = getLatestRideStatus(ctx, tx, ride.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err)
-				return
-			}
-		} else {
+		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -325,8 +315,8 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	ride := &Ride{}
-	if err := tx.GetContext(ctx, ride, "SELECT * FROM rides WHERE id = ? FOR UPDATE", rideID); err != nil {
+	ride := &RideWithStatus{}
+	if err := tx.GetContext(ctx, ride, "SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE id = ? FOR UPDATE", rideID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, errors.New("ride not found"))
 			return
@@ -357,11 +347,7 @@ func chairPostRideStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	// After Picking up user
 	case "CARRYING":
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
+		status := ride.Status
 		if status != "PICKUP" {
 			writeError(w, http.StatusBadRequest, errors.New("chair has not arrived yet"))
 			return
