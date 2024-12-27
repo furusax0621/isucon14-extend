@@ -199,7 +199,8 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 		// 初期データをハックした感じ、とりあえず全部 COMPLETED にしておけば良さそう。。
 		stmt, err := tx.PreparexContext(
 			ctx,
-			"INSERT INTO ride_latest_statuses (ride_id, status) VALUES (?, 'COMPLETED')",
+			"INSERT INTO ride_latest_statuses (ride_id, status) VALUES (?, 'COMPLETED') "+
+				"ON DUPLICATE KEY UPDATE status = 'COMPLETED'",
 		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
