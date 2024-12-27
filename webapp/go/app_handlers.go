@@ -199,11 +199,11 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	rides := []Ride{}
+	rides := []RideWithStatus{}
 	if err := tx.SelectContext(
 		ctx,
 		&rides,
-		`SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC`,
+		`SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE user_id = ? ORDER BY created_at DESC`,
 		user.ID,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -212,16 +212,23 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 
 	items := []getAppRidesResponseItem{}
 	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if status != "COMPLETED" {
+		if ride.Status != "COMPLETED" {
 			continue
 		}
 
-		fare, err := calculateDiscountedFare(ctx, tx, user.ID, &ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
+		r := &Ride{
+			ID:                   ride.ID,
+			UserID:               ride.UserID,
+			PickupLatitude:       ride.PickupLatitude,
+			PickupLongitude:      ride.PickupLongitude,
+			DestinationLatitude:  ride.DestinationLatitude,
+			DestinationLongitude: ride.DestinationLongitude,
+			Evaluation:           ride.Evaluation,
+			CreatedAt:            ride.CreatedAt,
+			UpdatedAt:            ride.UpdatedAt,
+		}
+
+		fare, err := calculateDiscountedFare(ctx, tx, user.ID, r, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -283,14 +290,6 @@ type executableGet interface {
 	GetContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 }
 
-func getLatestRideStatus(ctx context.Context, tx executableGet, rideID string) (string, error) {
-	status := ""
-	if err := tx.GetContext(ctx, &status, `SELECT status FROM ride_statuses WHERE ride_id = ? ORDER BY created_at DESC LIMIT 1`, rideID); err != nil {
-		return "", err
-	}
-	return status, nil
-}
-
 func appPostRides(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	req := &appPostRidesRequest{}
@@ -313,20 +312,15 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	rides := []Ride{}
-	if err := tx.SelectContext(ctx, &rides, `SELECT * FROM rides WHERE user_id = ?`, user.ID); err != nil {
+	rides := []RideWithStatus{}
+	if err := tx.SelectContext(ctx, &rides, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE user_id = ?`, user.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	continuingRideCount := 0
 	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if status != "COMPLETED" {
+		if ride.Status != "COMPLETED" {
 			continuingRideCount++
 		}
 	}
@@ -350,6 +344,14 @@ func appPostRides(w http.ResponseWriter, r *http.Request) {
 		ctx,
 		`INSERT INTO ride_statuses (id, ride_id, status) VALUES (?, ?, ?)`,
 		ulid.Make().String(), rideID, "MATCHING",
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		"INSERT INTO ride_latest_statuses (ride_id, status) VALUES (?, ?)",
+		rideID, "MATCHING",
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -526,8 +528,8 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	ride := &Ride{}
-	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE id = ?`, rideID); err != nil {
+	ride := &RideWithStatus{}
+	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE id = ?`, rideID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusNotFound, errors.New("ride not found"))
 			return
@@ -535,13 +537,8 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	status, err := getLatestRideStatus(ctx, tx, ride.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
 
-	if status != "ARRIVED" {
+	if ride.Status != "ARRIVED" {
 		writeError(w, http.StatusBadRequest, errors.New("not arrived yet"))
 		return
 	}
@@ -570,6 +567,14 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	if _, err := tx.ExecContext(
+		ctx,
+		"UPDATE ride_latest_statuses SET status = ? WHERE ride_id = ?",
+		"COMPLETED", rideID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE id = ?`, rideID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -590,7 +595,19 @@ func appPostRideEvaluation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fare, err := calculateDiscountedFare(ctx, tx, ride.UserID, ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
+	rr := &Ride{
+		ID:                   ride.ID,
+		UserID:               ride.UserID,
+		PickupLatitude:       ride.PickupLatitude,
+		PickupLongitude:      ride.PickupLongitude,
+		DestinationLatitude:  ride.DestinationLatitude,
+		DestinationLongitude: ride.DestinationLongitude,
+		Evaluation:           ride.Evaluation,
+		CreatedAt:            ride.CreatedAt,
+		UpdatedAt:            ride.UpdatedAt,
+	}
+
+	fare, err := calculateDiscountedFare(ctx, tx, ride.UserID, rr, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -669,8 +686,8 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	ride := &Ride{}
-	if err := tx.GetContext(ctx, ride, `SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, user.ID); err != nil {
+	ride := &RideWithStatus{}
+	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, user.ID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusOK, &appGetNotificationResponse{
 				RetryAfterMs: 30,
@@ -682,15 +699,9 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	yetSentRideStatus := RideStatus{}
-	status := ""
+	status := ride.Status
 	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			status, err = getLatestRideStatus(ctx, tx, ride.ID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err)
-				return
-			}
-		} else {
+		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -698,7 +709,18 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 		status = yetSentRideStatus.Status
 	}
 
-	fare, err := calculateDiscountedFare(ctx, tx, user.ID, ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
+	rr := &Ride{
+		ID:                   ride.ID,
+		UserID:               ride.UserID,
+		PickupLatitude:       ride.PickupLatitude,
+		PickupLongitude:      ride.PickupLongitude,
+		DestinationLatitude:  ride.DestinationLatitude,
+		DestinationLongitude: ride.DestinationLongitude,
+		Evaluation:           ride.Evaluation,
+		CreatedAt:            ride.CreatedAt,
+		UpdatedAt:            ride.UpdatedAt,
+	}
+	fare, err := calculateDiscountedFare(ctx, tx, user.ID, rr, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

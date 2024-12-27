@@ -75,6 +75,20 @@ type Ride struct {
 	UpdatedAt            time.Time      `db:"updated_at"`
 }
 
+type RideWithStatus struct {
+	ID                   string         `db:"id"`
+	UserID               string         `db:"user_id"`
+	ChairID              sql.NullString `db:"chair_id"`
+	PickupLatitude       int            `db:"pickup_latitude"`
+	PickupLongitude      int            `db:"pickup_longitude"`
+	DestinationLatitude  int            `db:"destination_latitude"`
+	DestinationLongitude int            `db:"destination_longitude"`
+	Evaluation           *int           `db:"evaluation"`
+	CreatedAt            time.Time      `db:"created_at"`
+	UpdatedAt            time.Time      `db:"updated_at"`
+	Status               string         `db:"status"`
+}
+
 type RideStatus struct {
 	ID          string     `db:"id"`
 	RideID      string     `db:"ride_id"`
