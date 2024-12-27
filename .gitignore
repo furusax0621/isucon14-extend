@@ -1,5 +1,5 @@
 .*
-go/
+./go/
 local/
 recipe/
 webapp/nodejs/

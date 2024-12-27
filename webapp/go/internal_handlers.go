@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math"
 	"net/http"
 	"slices"
 )
@@ -32,7 +31,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 
 	// ライドと椅子をマッチング
 	for _, ride := range rides {
-		distance := math.MaxInt
+		distance := 400
 		var matched ChairWithLocation
 		var matchedIndex int
 		for i, chair := range chairs {
