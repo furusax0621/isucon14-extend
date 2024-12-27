@@ -146,3 +146,12 @@ CREATE TABLE chair_last_locations
   PRIMARY KEY (chair_id)
 )
   COMMENT = '椅子の最終位置情報テーブル';
+
+DROP TABLE IF EXISTS ride_latest_statuses;
+CREATE TABLE ride_latest_statuses
+(
+  ride_id VARCHAR(26) NOT NULL COMMENT 'ライドID',
+  status  ENUM ('MATCHING', 'ENROUTE', 'PICKUP', 'CARRYING', 'ARRIVED', 'COMPLETED') NOT NULL COMMENT '状態',
+  PRIMARY KEY (ride_id)
+)
+  COMMENT = 'ライドの最新状態テーブル';
