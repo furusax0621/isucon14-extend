@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -43,8 +43,7 @@ func requestPaymentGatewayPostPayment(ctx context.Context, token string, param *
 
 			if res.StatusCode != http.StatusNoContent {
 				// エラーが返ってきても成功している場合があるので、とりあえずリトライする。 Idempotency-Key が同じなので重複リクエストも冪等に処理される
-				slog.Warn("payment gateway post payment failed, retrying", slog.String("ride_id", rideID), slog.Int("status_code", res.StatusCode))
-				return errors.New("payment gateway post payment failed")
+				return fmt.Errorf("failed to request payment gateway, status code = %d, rideID = %s", res.StatusCode, rideID)
 			}
 			return nil
 		}()
