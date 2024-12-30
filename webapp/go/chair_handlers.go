@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -114,26 +116,41 @@ func chairPostCoordinate(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	chairLocationID := ulid.Make().String()
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)`,
-		chairLocationID, chair.ID, req.Latitude, req.Longitude, now,
-	); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	if _, err := tx.ExecContext(
-		ctx,
-		"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) AS new "+
-			"ON DUPLICATE KEY UPDATE "+
-			"total_distance = chair_last_locations.total_distance + ABS(chair_last_locations.latitude - new.latitude) + ABS(chair_last_locations.longitude - new.longitude), "+
-			"latitude = new.latitude, longitude = new.longitude, updated_at = new.updated_at ",
-		chair.ID, req.Latitude, req.Longitude, now,
-	); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
+	// 椅子の位置情報更新は即時じゃなくて良いので、ステータス更新とは非同期で実施する
+	go func(ctx context.Context, chairID string, latitude, longitude int, now time.Time) {
+		tx, err := db.Beginx()
+		if err != nil {
+			slog.Error("failed to begin transaction", slog.Any("err", err))
+			return
+		}
+		defer tx.Rollback()
+
+		chairLocationID := ulid.Make().String()
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO chair_locations (id, chair_id, latitude, longitude, created_at) VALUES (?, ?, ?, ?, ?)`,
+			chairLocationID, chairID, latitude, longitude, now,
+		); err != nil {
+			slog.Error("failed to insert chair location", slog.Any("err", err))
+			return
+		}
+		if _, err := tx.ExecContext(
+			ctx,
+			"INSERT INTO chair_last_locations (chair_id, latitude, longitude, updated_at, total_distance) VALUES (?, ?, ?, ?, 0) AS new "+
+				"ON DUPLICATE KEY UPDATE "+
+				"total_distance = chair_last_locations.total_distance + ABS(chair_last_locations.latitude - new.latitude) + ABS(chair_last_locations.longitude - new.longitude), "+
+				"latitude = new.latitude, longitude = new.longitude, updated_at = new.updated_at ",
+			chairID, latitude, longitude, now,
+		); err != nil {
+			slog.Error("failed to update chair last location", slog.Any("err", err))
+			return
+		}
+
+		if err := tx.Commit(); err != nil {
+			slog.Error("failed to commit transaction", slog.Any("err", err))
+			return
+		}
+	}(context.WithoutCancel(ctx), chair.ID, req.Latitude, req.Longitude, now)
 
 	ride := &RideWithStatus{}
 	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
