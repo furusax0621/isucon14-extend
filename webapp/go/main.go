@@ -24,6 +24,11 @@ var db *sqlx.DB
 func main() {
 	mux := setup()
 	slog.Info("Listening on :8080")
+
+	// 位置情報のバルクインサート
+	go bulkInsertChairLocation()
+	defer close(chairLocationQueue)
+
 	http.ListenAndServe(":8080", mux)
 }
 
