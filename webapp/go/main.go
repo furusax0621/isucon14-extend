@@ -20,6 +20,7 @@ import (
 )
 
 var db *sqlx.DB
+var paymentGatewayURL string
 
 func main() {
 	mux := setup()
@@ -213,6 +214,15 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
+		}
+	}
+
+	// 支払いマイクロサービスのURLを取得
+	// これは起動時に一回だけ取得すればOKなはず
+	{
+		if err := tx.GetContext(ctx, &paymentGatewayURL, "SELECT value FROM settings WHERE name = 'payment_gateway_url'"); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
 		}
 	}
 
