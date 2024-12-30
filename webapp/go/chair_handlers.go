@@ -209,7 +209,7 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 	chair := ctx.Value("chair").(*Chair)
 
 	rideMapByChairIDMutex.RLock()
-	rideFromMap, ok := rideMapByChairID[chair.ID]
+	ride, ok := rideMapByChairID[chair.ID]
 	rideMapByChairIDMutex.RUnlock()
 
 	if !ok {
@@ -230,16 +230,14 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 
 	var tmp struct {
 		LatestStatus string `db:"latest_status"`
-		// ID            sql.NullString `db:"ride_status_id"`
-		// YetSendStatus sql.NullString `db:"yet_sent_status"`
 	}
-	if err := tx.GetContext(ctx, &tmp, `SELECT status AS latest_status FROM ride_latest_statuses WHERE ride_id  = ?`, rideFromMap.ID); err != nil {
+	if err := tx.GetContext(ctx, &tmp, `SELECT status AS latest_status FROM ride_latest_statuses WHERE ride_id  = ?`, ride.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	status := tmp.LatestStatus
-	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, rideFromMap.ID); err != nil {
+	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -248,28 +246,8 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 		status = yetSentRideStatus.Status
 	}
 
-	// 	if err := tx.GetContext(
-	// 		ctx, &tmp,
-	// 		`
-	// SELECT rs.id AS ride_status_id, rls.status AS latest_status, rs.status AS yet_sent_status FROM ride_latest_statuses AS rls
-	// LEFT JOIN (
-	//   SELECT id, ride_id, status, chair_sent_at, ROW_NUMBER() OVER (PARTITION BY ride_id ORDER BY created_at ASC) AS row_num FROM ride_statuses
-	//   WHERE chair_sent_at IS NULL
-	// ) AS rs ON rls.ride_id = rs.ride_id AND rs.row_num = 1
-	// WHERE rls.ride_id = ?`,
-	// 		ride.ID,
-	// 	); err != nil {
-	// 		writeError(w, http.StatusInternalServerError, err)
-	// 		return
-	// 	}
-
-	// 	status := tmp.LatestStatus
-	// 	if tmp.YetSendStatus.Valid {
-	// 		status = tmp.YetSendStatus.String
-	// 	}
-
 	user := &User{}
-	err = tx.GetContext(ctx, user, "SELECT * FROM users WHERE id = ? FOR SHARE", rideFromMap.UserID)
+	err = tx.GetContext(ctx, user, "SELECT * FROM users WHERE id = ? FOR SHARE", ride.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -277,8 +255,6 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 
 	if yetSentRideStatus.ID != "" {
 		_, err := tx.ExecContext(ctx, `UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, yetSentRideStatus.ID)
-		// if tmp.ID.Valid {
-		// 	_, err := tx.ExecContext(ctx, `UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, tmp.ID.String)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -308,18 +284,18 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, &chairGetNotificationResponse{
 		Data: &chairGetNotificationResponseData{
-			RideID: rideFromMap.ID,
+			RideID: ride.ID,
 			User: simpleUser{
 				ID:   user.ID,
 				Name: fmt.Sprintf("%s %s", user.Firstname, user.Lastname),
 			},
 			PickupCoordinate: Coordinate{
-				Latitude:  rideFromMap.PickupLatitude,
-				Longitude: rideFromMap.PickupLongitude,
+				Latitude:  ride.PickupLatitude,
+				Longitude: ride.PickupLongitude,
 			},
 			DestinationCoordinate: Coordinate{
-				Latitude:  rideFromMap.DestinationLatitude,
-				Longitude: rideFromMap.DestinationLongitude,
+				Latitude:  ride.DestinationLatitude,
+				Longitude: ride.DestinationLongitude,
 			},
 			Status: status,
 		},
