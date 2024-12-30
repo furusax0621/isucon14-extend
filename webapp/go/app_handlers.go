@@ -667,6 +667,19 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := ctx.Value("user").(*User)
 
+	// キャッシュからライド情報を取得
+	rideMapByUserIDMutex.RLock()
+	rideFromMap, ok := rideMapByUserID[user.ID]
+	rideMapByUserIDMutex.RUnlock()
+
+	if !ok {
+		writeJSON(w, http.StatusOK, &appGetNotificationResponse{
+			RetryAfterMs: 30,
+		})
+		return
+	}
+	_ = rideFromMap // TODO: あとで活用する
+
 	tx, err := db.Beginx()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
