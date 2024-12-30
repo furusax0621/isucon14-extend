@@ -263,6 +263,9 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, err)
 				return
 			}
+			rideMapByChairIDMutex.Lock()
+			delete(rideMapByChairID, ride.ChairID.String)
+			rideMapByChairIDMutex.Unlock()
 		}
 	}
 
