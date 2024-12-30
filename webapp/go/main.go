@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,10 @@ import (
 
 var db *sqlx.DB
 var paymentGatewayURL string
+
+// その椅子が割り当てられているライドのキャッシュ
+var rideMapByChairID = map[string]Ride{}
+var rideMapByChairIDMutex sync.RWMutex
 
 func main() {
 	mux := setup()

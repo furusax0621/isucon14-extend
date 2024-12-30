@@ -30,6 +30,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 
 	matchedList := make(map[string]string)
+	rideMap := make(map[string]Ride)
 
 	// ライドと椅子をマッチング
 	for _, ride := range rides {
@@ -50,6 +51,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		matchedList[ride.ID] = matched.ID
+		rideMap[ride.ID] = ride
 
 		// 割り当てた椅子を割り当て待ちから削除
 		chairs = slices.Delete(chairs, matchedIndex, matchedIndex+1)
@@ -62,6 +64,8 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	rideMapByChairIDMutex.Lock()
+	defer rideMapByChairIDMutex.Unlock()
 	for rideID, chairID := range matchedList {
 		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chairID, rideID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -71,6 +75,8 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+
+		rideMapByChairID[chairID] = rideMap[rideID]
 	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
