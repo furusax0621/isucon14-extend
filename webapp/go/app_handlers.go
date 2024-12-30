@@ -760,6 +760,12 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
+		// ステータスが完了になったらキャッシュから削除する
+		if yetSentRideStatus.Status == "COMPLETED" {
+			rideMapByUserIDMutex.Lock()
+			delete(rideMapByUserID, user.ID)
+			rideMapByUserIDMutex.Unlock()
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

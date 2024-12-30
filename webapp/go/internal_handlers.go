@@ -65,7 +65,9 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	rideMapByChairIDMutex.Lock()
+	rideMapByUserIDMutex.Lock()
 	defer rideMapByChairIDMutex.Unlock()
+	defer rideMapByUserIDMutex.Unlock()
 	for rideID, chairID := range matchedList {
 		if _, err := tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chairID, rideID); err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -77,6 +79,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		}
 
 		rideMapByChairID[chairID] = rideMap[rideID]
+		rideMapByUserID[rideMap[rideID].UserID] = rideMap[rideID]
 	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
