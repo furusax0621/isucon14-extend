@@ -209,7 +209,7 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 	chair := ctx.Value("chair").(*Chair)
 
 	rideMapByChairIDMutex.RLock()
-	ride, ok := rideMapByChairID[chair.ID]
+	rideFromMap, ok := rideMapByChairID[chair.ID]
 	rideMapByChairIDMutex.RUnlock()
 
 	if !ok {
@@ -226,30 +226,54 @@ func chairGetNotification(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	var tmp struct {
-		ID            sql.NullString `db:"ride_status_id"`
-		LatestStatus  string         `db:"latest_status"`
-		YetSendStatus sql.NullString `db:"yet_sent_status"`
-	}
-	if err := tx.GetContext(
-		ctx, &tmp,
-		`
-SELECT rs.id AS ride_status_id, rls.status AS latest_status, rs.status AS yet_sent_status FROM ride_latest_statuses AS rls
-LEFT JOIN (
-  SELECT id, ride_id, status, chair_sent_at, ROW_NUMBER() OVER (PARTITION BY ride_id ORDER BY created_at ASC) AS row_num FROM ride_statuses
-  WHERE chair_sent_at IS NULL
-) AS rs ON rls.ride_id = rs.ride_id AND rs.row_num = 1
-WHERE rls.ride_id = ?`,
-		ride.ID,
-	); err != nil {
+	ride := &RideWithStatus{}
+	yetSentRideStatus := RideStatus{}
+
+	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE chair_id = ? ORDER BY updated_at DESC LIMIT 1`, chair.ID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusOK, &chairGetNotificationResponse{
+				RetryAfterMs: 30,
+			})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	status := tmp.LatestStatus
-	if tmp.YetSendStatus.Valid {
-		status = tmp.YetSendStatus.String
+	status := ride.Status
+	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND chair_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		status = yetSentRideStatus.Status
 	}
+
+	// 	var tmp struct {
+	// 		ID            sql.NullString `db:"ride_status_id"`
+	// 		LatestStatus  string         `db:"latest_status"`
+	// 		YetSendStatus sql.NullString `db:"yet_sent_status"`
+	// 	}
+	// 	if err := tx.GetContext(
+	// 		ctx, &tmp,
+	// 		`
+	// SELECT rs.id AS ride_status_id, rls.status AS latest_status, rs.status AS yet_sent_status FROM ride_latest_statuses AS rls
+	// LEFT JOIN (
+	//   SELECT id, ride_id, status, chair_sent_at, ROW_NUMBER() OVER (PARTITION BY ride_id ORDER BY created_at ASC) AS row_num FROM ride_statuses
+	//   WHERE chair_sent_at IS NULL
+	// ) AS rs ON rls.ride_id = rs.ride_id AND rs.row_num = 1
+	// WHERE rls.ride_id = ?`,
+	// 		ride.ID,
+	// 	); err != nil {
+	// 		writeError(w, http.StatusInternalServerError, err)
+	// 		return
+	// 	}
+
+	// 	status := tmp.LatestStatus
+	// 	if tmp.YetSendStatus.Valid {
+	// 		status = tmp.YetSendStatus.String
+	// 	}
 
 	user := &User{}
 	err = tx.GetContext(ctx, user, "SELECT * FROM users WHERE id = ? FOR SHARE", ride.UserID)
@@ -258,8 +282,10 @@ WHERE rls.ride_id = ?`,
 		return
 	}
 
-	if tmp.ID.Valid {
-		_, err := tx.ExecContext(ctx, `UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, tmp.ID.String)
+	if yetSentRideStatus.ID != "" {
+		_, err := tx.ExecContext(ctx, `UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, yetSentRideStatus.ID)
+		// if tmp.ID.Valid {
+		// 	_, err := tx.ExecContext(ctx, `UPDATE ride_statuses SET chair_sent_at = CURRENT_TIMESTAMP(6) WHERE id = ?`, tmp.ID.String)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -289,18 +315,18 @@ WHERE rls.ride_id = ?`,
 
 	writeJSON(w, http.StatusOK, &chairGetNotificationResponse{
 		Data: &chairGetNotificationResponseData{
-			RideID: ride.ID,
+			RideID: rideFromMap.ID,
 			User: simpleUser{
 				ID:   user.ID,
 				Name: fmt.Sprintf("%s %s", user.Firstname, user.Lastname),
 			},
 			PickupCoordinate: Coordinate{
-				Latitude:  ride.PickupLatitude,
-				Longitude: ride.PickupLongitude,
+				Latitude:  rideFromMap.PickupLatitude,
+				Longitude: rideFromMap.PickupLongitude,
 			},
 			DestinationCoordinate: Coordinate{
-				Latitude:  ride.DestinationLatitude,
-				Longitude: ride.DestinationLongitude,
+				Latitude:  rideFromMap.DestinationLatitude,
+				Longitude: rideFromMap.DestinationLongitude,
 			},
 			Status: status,
 		},
