@@ -784,8 +784,8 @@ func getChairStats(ctx context.Context, tx *sqlx.Tx, chairID string) (appGetNoti
 	stats := appGetNotificationResponseChairStats{}
 
 	var tmp struct {
-		TotalRidesCount int `db:"total_rides_count"`
-		TotalEvaluation int `db:"total_evaluation"`
+		TotalRidesCount int           `db:"total_rides_count"`
+		TotalEvaluation sql.NullInt64 `db:"total_evaluation"`
 	}
 	err := tx.GetContext(
 		ctx,
@@ -801,8 +801,8 @@ func getChairStats(ctx context.Context, tx *sqlx.Tx, chairID string) (appGetNoti
 	}
 
 	stats.TotalRidesCount = tmp.TotalRidesCount
-	if tmp.TotalRidesCount > 0 {
-		stats.TotalEvaluationAvg = float64(tmp.TotalEvaluation) / float64(tmp.TotalRidesCount)
+	if tmp.TotalRidesCount > 0 && tmp.TotalEvaluation.Valid {
+		stats.TotalEvaluationAvg = float64(tmp.TotalEvaluation.Int64) / float64(tmp.TotalRidesCount)
 	}
 
 	return stats, nil
