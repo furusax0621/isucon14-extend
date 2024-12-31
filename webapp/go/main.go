@@ -27,6 +27,10 @@ var paymentGatewayURL string
 var rideMapByChairID = map[string]Ride{}
 var rideMapByChairIDMutex sync.RWMutex
 
+// ユーザーが現在リクエストしているライドのキャッシュ
+var rideMapByUserID = map[string]Ride{}
+var rideMapByUserIDMutex sync.RWMutex
+
 func main() {
 	mux := setup()
 	slog.Info("Listening on :8080")

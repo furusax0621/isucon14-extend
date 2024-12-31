@@ -667,6 +667,19 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user := ctx.Value("user").(*User)
 
+	// キャッシュからライド情報を取得
+	rideMapByUserIDMutex.RLock()
+	rideFromMap, ok := rideMapByUserID[user.ID]
+	rideMapByUserIDMutex.RUnlock()
+
+	if !ok {
+		writeJSON(w, http.StatusOK, &appGetNotificationResponse{
+			RetryAfterMs: 30,
+		})
+		return
+	}
+	_ = rideFromMap // TODO: あとで活用する
+
 	tx, err := db.Beginx()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -675,20 +688,14 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	ride := &RideWithStatus{}
-	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE user_id = ? ORDER BY created_at DESC LIMIT 1`, user.ID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeJSON(w, http.StatusOK, &appGetNotificationResponse{
-				RetryAfterMs: 30,
-			})
-			return
-		}
+	if err := tx.GetContext(ctx, ride, `SELECT r.*, rs.status FROM rides AS r JOIN ride_latest_statuses AS rs ON r.id = rs.ride_id WHERE ride_id = ?`, rideFromMap.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
 	yetSentRideStatus := RideStatus{}
 	status := ride.Status
-	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, ride.ID); err != nil {
+	if err := tx.GetContext(ctx, &yetSentRideStatus, `SELECT * FROM ride_statuses WHERE ride_id = ? AND app_sent_at IS NULL ORDER BY created_at ASC LIMIT 1`, rideFromMap.ID); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -698,15 +705,12 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rr := &Ride{
-		ID:                   ride.ID,
-		UserID:               ride.UserID,
-		PickupLatitude:       ride.PickupLatitude,
-		PickupLongitude:      ride.PickupLongitude,
-		DestinationLatitude:  ride.DestinationLatitude,
-		DestinationLongitude: ride.DestinationLongitude,
-		Evaluation:           ride.Evaluation,
-		CreatedAt:            ride.CreatedAt,
-		UpdatedAt:            ride.UpdatedAt,
+		ID:                   rideFromMap.ID,
+		UserID:               rideFromMap.UserID,
+		PickupLatitude:       rideFromMap.PickupLatitude,
+		PickupLongitude:      rideFromMap.PickupLongitude,
+		DestinationLatitude:  rideFromMap.DestinationLatitude,
+		DestinationLongitude: rideFromMap.DestinationLongitude,
 	}
 	fare, err := calculateDiscountedFare(ctx, tx, user.ID, rr, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
 	if err != nil {
@@ -716,19 +720,19 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 
 	response := &appGetNotificationResponse{
 		Data: &appGetNotificationResponseData{
-			RideID: ride.ID,
+			RideID: rideFromMap.ID,
 			PickupCoordinate: Coordinate{
-				Latitude:  ride.PickupLatitude,
-				Longitude: ride.PickupLongitude,
+				Latitude:  rideFromMap.PickupLatitude,
+				Longitude: rideFromMap.PickupLongitude,
 			},
 			DestinationCoordinate: Coordinate{
-				Latitude:  ride.DestinationLatitude,
-				Longitude: ride.DestinationLongitude,
+				Latitude:  rideFromMap.DestinationLatitude,
+				Longitude: rideFromMap.DestinationLongitude,
 			},
 			Fare:      fare,
 			Status:    status,
-			CreatedAt: ride.CreatedAt.UnixMilli(),
-			UpdateAt:  ride.UpdatedAt.UnixMilli(),
+			CreatedAt: rideFromMap.CreatedAt.UnixMilli(),
+			UpdateAt:  rideFromMap.UpdatedAt.UnixMilli(),
 		},
 		RetryAfterMs: 30,
 	}
@@ -759,6 +763,12 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
+		}
+		// ステータスが完了になったらキャッシュから削除する
+		if yetSentRideStatus.Status == "COMPLETED" {
+			rideMapByUserIDMutex.Lock()
+			delete(rideMapByUserID, user.ID)
+			rideMapByUserIDMutex.Unlock()
 		}
 	}
 
