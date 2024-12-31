@@ -783,57 +783,26 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 func getChairStats(ctx context.Context, tx *sqlx.Tx, chairID string) (appGetNotificationResponseChairStats, error) {
 	stats := appGetNotificationResponseChairStats{}
 
-	rides := []Ride{}
-	err := tx.SelectContext(
+	var tmp struct {
+		TotalRidesCount int           `db:"total_rides_count"`
+		TotalEvaluation sql.NullInt64 `db:"total_evaluation"`
+	}
+	err := tx.GetContext(
 		ctx,
-		&rides,
-		`SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC`,
+		&tmp,
+		`
+	SELECT COUNT(r.evaluation) AS total_rides_count, SUM(r.evaluation) AS total_evaluation 
+	FROM rides AS r 
+	JOIN ride_latest_statuses AS rl ON r.id = rl.ride_id WHERE rl.status = 'COMPLETED' AND r.chair_id = ?`,
 		chairID,
 	)
 	if err != nil {
 		return stats, err
 	}
 
-	totalRideCount := 0
-	totalEvaluation := 0.0
-	for _, ride := range rides {
-		rideStatuses := []RideStatus{}
-		err = tx.SelectContext(
-			ctx,
-			&rideStatuses,
-			`SELECT * FROM ride_statuses WHERE ride_id = ? ORDER BY created_at`,
-			ride.ID,
-		)
-		if err != nil {
-			return stats, err
-		}
-
-		var arrivedAt, pickupedAt *time.Time
-		var isCompleted bool
-		for _, status := range rideStatuses {
-			if status.Status == "ARRIVED" {
-				arrivedAt = &status.CreatedAt
-			} else if status.Status == "CARRYING" {
-				pickupedAt = &status.CreatedAt
-			}
-			if status.Status == "COMPLETED" {
-				isCompleted = true
-			}
-		}
-		if arrivedAt == nil || pickupedAt == nil {
-			continue
-		}
-		if !isCompleted {
-			continue
-		}
-
-		totalRideCount++
-		totalEvaluation += float64(*ride.Evaluation)
-	}
-
-	stats.TotalRidesCount = totalRideCount
-	if totalRideCount > 0 {
-		stats.TotalEvaluationAvg = totalEvaluation / float64(totalRideCount)
+	stats.TotalRidesCount = tmp.TotalRidesCount
+	if tmp.TotalRidesCount > 0 && tmp.TotalEvaluation.Valid {
+		stats.TotalEvaluationAvg = float64(tmp.TotalEvaluation.Int64) / float64(tmp.TotalRidesCount)
 	}
 
 	return stats, nil
