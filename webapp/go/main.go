@@ -17,7 +17,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
-	"github.com/kaz/pprotein/integration/standalone"
 )
 
 var db *sqlx.DB
@@ -123,9 +122,6 @@ func setup() http.Handler {
 	{
 		mux.HandleFunc("GET /api/internal/matching", internalGetMatching)
 	}
-
-	// integration pprotein
-	go standalone.Integrate(":19000")
 
 	return mux
 }
@@ -236,11 +232,6 @@ func postInitialize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	if _, err := http.Get("http://localhost:18080/api/group/collect"); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
